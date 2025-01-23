@@ -1,0 +1,30 @@
+
+learner_config = {
+    "replay_buffer_size": 4200,
+    "model_pool_size": 32,
+    "model_pool_name": "model-pool",
+    "gamma": 0.99,
+    "lambda": 0.98,
+    "min_data_patch_count": 300,
+    "effective_batch_size": 4096,
+    "device_id": 0,
+    "epochs": 5,
+    "world_size": 2,
+    "clip": 0.1,
+    "lr": 1e-5,
+    "policy_coeff": 1,
+    "value_coeff": 1,
+    "entropy_coeff": 1.5e-1,
+    "entropy_decay": 0.999983,
+    "log_interval": 60,
+    "log_fan_interval": 3600,
+    "ckpt_save_interval": 1800,
+    "ckpt_save_path": "checkpoint/",
+    "sync_ppo": False,
+    "model_sync_iteration": 1,  # nullify if sync_ppo = True
+    "mutable_param_path": "mutable_params/",
+    "log_note": "NA",
+    "load_ckpt": True,
+    "load_from_sl": False,  # alternative loading and training scheme for sl ckpts
+    "load_path": "NA",
+}
