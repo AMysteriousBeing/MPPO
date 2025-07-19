@@ -29,5 +29,5 @@ learner_config = {
     "load_path": "Supervised_Learning/sl_ckpts/smth/46.pkl",
     # "load_path": "/home/llf/model_75416.pt",
 }
-guided_actor_count = 10
-sampling_actor_count = 70
+guided_actor_count = 5
+sampling_actor_count = 75
