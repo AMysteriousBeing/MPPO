@@ -1,1 +1,1 @@
-# MPPO-MCRMahjong
+# MPPO
