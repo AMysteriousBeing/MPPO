@@ -2,8 +2,6 @@ from agent import MahjongGBAgent
 from collections import defaultdict
 import numpy as np
 
-# Feature agent adapted for MahjongGBAgent with 136-channel features
-
 try:
     from MahjongGB import MahjongFanCalculator
 except:
@@ -14,7 +12,7 @@ except:
 
 
 def convert_to_fixed_length_binary(number, length):
-    if number > 36:
+    if int(number) > 36:
         return [1] * 6
     binary = bin(number)[2:]
     binary_length = len(binary)
@@ -33,14 +31,12 @@ class FeatureAgent2Adapted(MahjongGBAgent):
     normal_obs_space = (240,)
     # quan1+men1+unseen34+(history29+meld4*4+hand14+wall10)*4
     oracle_obs_space = (312,)
-
+    # unimplemented
+    normal_feature_space = (0, 4, 9)
     # unimplemented
     oracle_feature_space = (0, 4, 9)
     # pass1+hu1+play34+chi63+peng34+gang34+angang34+bugang34
     action_space = (235,)
-
-    # quan1+men1+unseen1+hand1+ meld4*4 +(history29)*4
-    normal_feature_space = (136, 4, 9)
 
     OFFSET_OBS = {
         "PREVALENT_WIND": 0,
@@ -63,18 +59,22 @@ class FeatureAgent2Adapted(MahjongGBAgent):
         "AnGang": 167,
         "BuGang": 201,
     }
-    TILE_LIST = [
-        *("W%d" % (i + 1) for i in range(9)),
-        *("T%d" % (i + 1) for i in range(9)),
-        *("B%d" % (i + 1) for i in range(9)),
-        *("F%d" % (i + 1) for i in range(4)),
-        *("J%d" % (i + 1) for i in range(3)),
-    ]
-    OFFSET_TILE = {c: i for i, c in enumerate(TILE_LIST)}
-    OFFSET_TILE["PUBLIC"] = 34
-    OFFSET_TILE["CONCEALED"] = 35
+    # TILE_LIST = [
+    #     *("W%d" % (i + 1) for i in range(9)),
+    #     *("T%d" % (i + 1) for i in range(9)),
+    #     *("B%d" % (i + 1) for i in range(9)),
+    #     *("F%d" % (i + 1) for i in range(4)),
+    #     *("J%d" % (i + 1) for i in range(3)),
+    # ]
+    # OFFSET_TILE = {c: i for i, c in enumerate(TILE_LIST)}
+    # OFFSET_TILE["PUBLIC"] = 34
+    # OFFSET_TILE["CONCEALED"] = 35
 
-    def __init__(self, seatWind):
+    def __init__(self, seatWind, tile_coding):
+        self.TILE_LIST = tile_coding
+        self.OFFSET_TILE = {c: i for i, c in enumerate(self.TILE_LIST)}
+        self.OFFSET_TILE["PUBLIC"] = 34
+        self.OFFSET_TILE["CONCEALED"] = 35
         self.duplicate = True
         self.seatWind = seatWind
         self.packs = [[] for i in range(4)]
@@ -87,7 +87,7 @@ class FeatureAgent2Adapted(MahjongGBAgent):
         self.wallLast = False
         self.myWallLast = False
         self.isAboutKong = False
-        self.obs = np.full(self.normal_obs_space, 255, np.uint8)
+        self.obs = np.full(self.normal_obs_space, -1, np.uint8)
         self.obs[self.OFFSET_OBS["SEAT_WIND"]] = self.seatWind
 
     """
@@ -419,50 +419,6 @@ class FeatureAgent2Adapted(MahjongGBAgent):
         if action < self.OFFSET_ACT["BuGang"]:
             return "Gang " + self.TILE_LIST[action - self.OFFSET_ACT["AnGang"]]
         return "BuGang " + self.TILE_LIST[action - self.OFFSET_ACT["BuGang"]]
-    
-    @staticmethod
-    def action2response_static(action, prev_tile):
-        if action < FeatureAgent2Adapted.OFFSET_ACT["Hu"]:
-            return "Pass"
-        if action < FeatureAgent2Adapted.OFFSET_ACT["Play"]:
-            return "Hu"
-        if action < FeatureAgent2Adapted.OFFSET_ACT["Chi"]:
-            return (
-                "Play "
-                + FeatureAgent2Adapted.TILE_LIST[
-                    action - FeatureAgent2Adapted.OFFSET_ACT["Play"]
-                ]
-            )
-        if action < FeatureAgent2Adapted.OFFSET_ACT["Peng"]:
-            t = (action - FeatureAgent2Adapted.OFFSET_ACT["Chi"]) // 3
-            return "Chi " + prev_tile + " " + "WTB"[t // 7] + str(t % 7 + 2)
-        if action < FeatureAgent2Adapted.OFFSET_ACT["Gang"]:
-            return (
-                "Peng "
-                + FeatureAgent2Adapted.TILE_LIST[
-                    action - FeatureAgent2Adapted.OFFSET_ACT["Peng"]
-                ]
-            )
-        if action < FeatureAgent2Adapted.OFFSET_ACT["AnGang"]:
-            return (
-                "Gang "
-                + FeatureAgent2Adapted.TILE_LIST[
-                    action - FeatureAgent2Adapted.OFFSET_ACT["Gang"]
-                ]
-            )
-        if action < FeatureAgent2Adapted.OFFSET_ACT["BuGang"]:
-            return (
-                "AnGang "
-                + FeatureAgent2Adapted.TILE_LIST[
-                    action - FeatureAgent2Adapted.OFFSET_ACT["AnGang"]
-                ]
-            )
-        return (
-            "BuGang "
-            + FeatureAgent2Adapted.TILE_LIST[
-                action - FeatureAgent2Adapted.OFFSET_ACT["BuGang"]
-            ]
-        )
 
     """
     Pass
@@ -503,13 +459,13 @@ class FeatureAgent2Adapted(MahjongGBAgent):
         return self.OFFSET_ACT["Pass"]
 
     def _hand_embedding_update(self):
-        self.obs[self.OFFSET_OBS["HAND"] : self.OFFSET_OBS["WALL"]] = 255
+        self.obs[self.OFFSET_OBS["HAND"] : self.OFFSET_OBS["WALL"]] = -1
         # print(len(self.hand), self.hand)
         for i, tile in enumerate(self.hand):
             self.obs[self.OFFSET_OBS["HAND"] + i] = self.OFFSET_TILE[tile]
 
     def _wall_embedding_update(self):
-        self.obs[self.OFFSET_OBS["WALL"] : self.OFFSET_OBS["PLAYER_START"]] = 255
+        self.obs[self.OFFSET_OBS["WALL"] : self.OFFSET_OBS["PLAYER_START"]] = -1
         for i, tile in enumerate(
             self.wall[: self.OFFSET_OBS["PLAYER_START"] - self.OFFSET_OBS["WALL"]]
         ):
@@ -540,7 +496,7 @@ class FeatureAgent2Adapted(MahjongGBAgent):
             + self.OFFSET_OBS["MELD_START"]
             + self.OFFSET_OBS["MELD_LEN"] * l
         )
-        self.obs[offset : offset + 4] = 255
+        self.obs[offset : offset + 4] = -1
 
     def _history_embedding_append(self, p):
         assert len(self.history[p]) <= 29
@@ -552,7 +508,7 @@ class FeatureAgent2Adapted(MahjongGBAgent):
     def _history_embedding_pop(self, p):
         l = len(self.history[p])
         offset = self.OFFSET_OBS["PLAYER_START"] + self.OFFSET_OBS["PLAYER_LEN"] * p + l
-        self.obs[offset] = 255
+        self.obs[offset] = -1
 
     def _unshown_embedding_update(self):
         for i, tile in enumerate(self.TILE_LIST):
@@ -600,7 +556,7 @@ class FeatureAgent2Adapted(MahjongGBAgent):
 
     # normal_observation
     def obs_normal(self):
-        return self.feature_normal_from_normal(self.obs.copy())
+        return self.obs.copy()
 
     # oracle_observation
     def obs_oracle(self, obs_list):
@@ -613,84 +569,7 @@ class FeatureAgent2Adapted(MahjongGBAgent):
 
     @staticmethod
     def feature_normal_from_normal(normal_obs):
-        feature = np.zeros((FeatureFullAdapted.normal_feature_space[0], 36), np.uint8)
-        # 8-bit coding for action, 29 actions, 4 players
-        # 2-bit action: 00：play, 01: chi, 02: peng, 03: gang
-        dense_feature = np.zeros((8 * 29 * 4), np.uint8)
-        feature[0, normal_obs[0]] = 1
-        feature[1, normal_obs[1]] = 1
-        for j in range(34):
-            feature[2, j] = normal_obs[j + 2]
-        tile_list = []
-        for j in range(14):
-            tile = normal_obs[36 + j]
-            if tile != 255:
-                tile_list.append(TILE_LIST[tile])
-                feature[3, tile] += 1
-        # print(tile_list)
-        for i in range(4):
-            for j in range(4):
-                offset = 89 + i * 45 + j * 4
-                for k in range(4):
-                    tile = normal_obs[offset + k]
-                    if tile != 255:
-                        feature[4 + i * 4 + j, tile] += 1
-        for i in range(4):
-            for j in range(29):
-                action = normal_obs[60 + i * 45 + j]
-                if action < FeatureAgent2Adapted.OFFSET_ACT["Chi"]:
-                    tile = action - FeatureAgent2Adapted.OFFSET_ACT["Play"]
-                    feature[20 + i * 29 + j, tile] = 1
-                    dense_feature[i * 8 * 29 + j : i * 8 * 29 + j + 2] = [0, 0]
-                    dense_feature[i * 8 * 29 + j + 2 : i * 8 * 29 + j + 8] = (
-                        convert_to_fixed_length_binary(tile, 6)
-                    )
-                elif action < FeatureAgent2Adapted.OFFSET_ACT["Peng"]:
-                    t = (action - FeatureAgent2Adapted.OFFSET_ACT["Chi"]) // 3
-                    color = "WTB"[t // 7]
-                    num = t % 7 + 2
-                    tile = "%s%d" % (color, num)
-                    for k in range(-1, 2):
-                        feature[
-                            20 + i * 29 + j, FeatureAgent2Adapted.OFFSET_TILE[tile] + k
-                        ] = 1
-                    dense_feature[i * 8 * 29 + j : i * 8 * 29 + j + 2] = [0, 1]
-                    dense_feature[i * 8 * 29 + j + 2 : i * 8 * 29 + j + 8] = (
-                        convert_to_fixed_length_binary(
-                            FeatureAgent2Adapted.OFFSET_TILE[tile], 6
-                        )
-                    )
-
-                elif action < FeatureAgent2Adapted.OFFSET_ACT["Gang"]:
-                    tile = action - FeatureAgent2Adapted.OFFSET_ACT["Peng"]
-                    feature[20 + i * 29 + j, tile] = 3
-                    dense_feature[i * 8 * 29 + j : i * 8 * 29 + j + 2] = [1, 0]
-                    dense_feature[i * 8 * 29 + j + 2 : i * 8 * 29 + j + 8] = (
-                        convert_to_fixed_length_binary(tile, 6)
-                    )
-                elif action < FeatureAgent2Adapted.OFFSET_ACT["AnGang"]:
-                    tile = action - FeatureAgent2Adapted.OFFSET_ACT["Gang"]
-                    feature[20 + i * 29 + j, tile] = 4
-                    dense_feature[i * 8 * 29 + j : i * 8 * 29 + j + 2] = [1, 1]
-                    dense_feature[i * 8 * 29 + j + 2 : i * 8 * 29 + j + 8] = (
-                        convert_to_fixed_length_binary(tile, 6)
-                    )
-                elif action < FeatureAgent2Adapted.OFFSET_ACT["BuGang"]:
-                    tile = action - FeatureAgent2Adapted.OFFSET_ACT["AnGang"]
-                    feature[20 + i * 29 + j, tile] = 4
-                    dense_feature[i * 8 * 29 + j : i * 8 * 29 + j + 2] = [1, 1]
-                    dense_feature[i * 8 * 29 + j + 2 : i * 8 * 29 + j + 8] = (
-                        convert_to_fixed_length_binary(tile, 6)
-                    )
-                elif action != 255:
-                    tile = action - FeatureAgent2Adapted.OFFSET_ACT["BuGang"]
-                    feature[20 + i * 29 + j, tile] = 4
-                    dense_feature[i * 8 * 29 + j : i * 8 * 29 + j + 2] = [1, 1]
-                    dense_feature[i * 8 * 29 + j + 2 : i * 8 * 29 + j + 8] = (
-                        convert_to_fixed_length_binary(tile, 6)
-                    )
-        feature = feature.reshape(np.prod(FeatureFullAdapted.normal_feature_space))
-        return np.concatenate((feature, dense_feature))
+        raise NotImplementedError
 
     @staticmethod
     def feature_normal_from_oracle(oracle_obs):
@@ -710,7 +589,7 @@ TILE_LIST = [
 ]
 
 
-class FeatureFullAdapted(FeatureAgent2Adapted):
+class FeatureFull(FeatureAgent2Adapted):
 
     # quan1+men1+unseen1+hand1+ meld4*4 +(history29)*4
     normal_feature_space = (136, 4, 9)
@@ -718,8 +597,11 @@ class FeatureFullAdapted(FeatureAgent2Adapted):
     oracle_feature_space = (179, 4, 9)
 
     @staticmethod
-    def feature_normal_from_normal(normal_obs):
-        feature = np.zeros((FeatureFullAdapted.normal_feature_space[0], 36), np.uint8)
+    def feature_normal_from_normal(normal_obs, tile_coding):
+        OFFSET_TILE = {c: i for i, c in enumerate(tile_coding)}
+        OFFSET_TILE["PUBLIC"] = 34
+        OFFSET_TILE["CONCEALED"] = 35
+        feature = np.zeros((FeatureFull.normal_feature_space[0], 36), np.uint8)
         # 8-bit coding for action, 29 actions, 4 players
         # 2-bit action: 00：play, 01: chi, 02: peng, 03: gang
         dense_feature = np.zeros((8 * 29 * 4), np.uint8)
@@ -757,14 +639,10 @@ class FeatureFullAdapted(FeatureAgent2Adapted):
                     num = t % 7 + 2
                     tile = "%s%d" % (color, num)
                     for k in range(-1, 2):
-                        feature[
-                            20 + i * 29 + j, FeatureAgent2Adapted.OFFSET_TILE[tile] + k
-                        ] = 1
+                        feature[20 + i * 29 + j, OFFSET_TILE[tile] + k] = 1
                     dense_feature[i * 8 * 29 + j : i * 8 * 29 + j + 2] = [0, 1]
                     dense_feature[i * 8 * 29 + j + 2 : i * 8 * 29 + j + 8] = (
-                        convert_to_fixed_length_binary(
-                            FeatureAgent2Adapted.OFFSET_TILE[tile], 6
-                        )
+                        convert_to_fixed_length_binary(OFFSET_TILE[tile], 6)
                     )
 
                 elif action < FeatureAgent2Adapted.OFFSET_ACT["Gang"]:
@@ -795,12 +673,15 @@ class FeatureFullAdapted(FeatureAgent2Adapted):
                     dense_feature[i * 8 * 29 + j + 2 : i * 8 * 29 + j + 8] = (
                         convert_to_fixed_length_binary(tile, 6)
                     )
-        feature = feature.reshape(np.prod(FeatureFullAdapted.normal_feature_space))
+        feature = feature.reshape(np.prod(FeatureFull.normal_feature_space))
         return np.concatenate((feature, dense_feature))
 
     @staticmethod
-    def feature_normal_from_oracle(oracle_obs):
-        feature = np.zeros((FeatureFullAdapted.normal_feature_space[0], 36), np.uint8)
+    def feature_normal_from_oracle(oracle_obs, tile_coding):
+        OFFSET_TILE = {c: i for i, c in enumerate(tile_coding)}
+        OFFSET_TILE["PUBLIC"] = 34
+        OFFSET_TILE["CONCEALED"] = 35
+        feature = np.zeros((FeatureFull.normal_feature_space[0], 36), np.uint8)
         feature[0, oracle_obs[0]] = 1
         feature[1, oracle_obs[1]] = 1
         for j in range(34):
@@ -821,9 +702,7 @@ class FeatureFullAdapted(FeatureAgent2Adapted):
                     num = t % 7 + 2
                     tile = "%s%d" % (color, num)
                     for k in range(-1, 2):
-                        feature[
-                            4 + i * 33 + j, FeatureAgent2Adapted.OFFSET_TILE[tile] + k
-                        ] = 1
+                        feature[4 + i * 33 + j, OFFSET_TILE[tile] + k] = 1
                 elif action < FeatureAgent2Adapted.OFFSET_ACT["Gang"]:
                     tile = action - FeatureAgent2Adapted.OFFSET_ACT["Peng"]
                     feature[4 + i * 33 + j, tile] = 3
@@ -842,11 +721,11 @@ class FeatureFullAdapted(FeatureAgent2Adapted):
                     tile = oracle_obs[offset + k]
                     if tile != 255:
                         feature[33 + i * 33 + j, tile] += 1
-        return feature.reshape(FeatureFullAdapted.normal_feature_space)
+        return feature.reshape(FeatureFull.normal_feature_space)
 
     @staticmethod
     def feature_oracle_from_oracle(oracle_obs):
-        feature = np.zeros((FeatureFullAdapted.oracle_feature_space[0], 36), np.uint8)
+        feature = np.zeros((FeatureFull.oracle_feature_space[0], 36), np.uint8)
         feature[0, oracle_obs[0]] = 1
         feature[1, oracle_obs[1]] = 1
         for j in range(34):
@@ -892,7 +771,7 @@ class FeatureFullAdapted(FeatureAgent2Adapted):
                 tile = oracle_obs[95 + i * 69 + j]
                 if tile != 255:
                     feature[37 + i * 44 + j, tile] = 1
-        return feature.reshape(FeatureFullAdapted.oracle_feature_space)
+        return feature.reshape(FeatureFull.oracle_feature_space)
 
 
 class FeatureSlim(FeatureAgent2Adapted):
@@ -964,4 +843,4 @@ class FeatureSlim(FeatureAgent2Adapted):
 
 
 def get_feature_clz(name):
-    return {"full": FeatureFullAdapted, "slim": FeatureSlim}[name]
+    return {"full": FeatureFull, "slim": FeatureSlim}[name]

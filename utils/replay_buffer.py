@@ -3,6 +3,79 @@ import _pickle as cPickle
 from collections import deque, defaultdict
 import numpy as np
 import random
+from bisect import bisect_right
+import os
+import json
+
+
+def buffer_factory(capacity):
+    return {"queue": deque(maxlen=capacity), "counter": 0}
+
+
+class ReplayBufferSIL:
+    """
+    ReplayBufferSIL is specifically designed for MCR MahJong with 80 achievable fans
+    """
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        # self.queue: temporary queue for holding data
+        self.queue = Manager().Queue(capacity * 10)
+        # actual struct for organizing gameplay records
+        self.fan_dict = defaultdict(self._get_buffer)
+        # meta data for counting records w.r.t. fans
+        self.meta_counter = []
+        self.meta_prefix_sum = []
+        self.meta_keys = []
+
+    def _get_buffer(self):
+        return buffer_factory(self.capacity)
+
+    def push(self, game_record):  # only called by actors
+        self.queue.put(game_record)
+
+    def get_entry_count(self):
+        if len(self.meta_prefix_sum) == 0:
+            return 0
+        else:
+            return self.meta_prefix_sum[-1]
+
+    def organize(self):  # cache data from temporary queue and organize according to fan
+        while not self.queue.empty():
+            gameplay_record = self.queue.get()
+            fan_list = gameplay_record["fans"]
+            for fan in fan_list:
+                self.fan_dict[fan]["queue"].append(gameplay_record)
+                if self.fan_dict[fan]["counter"] < self.capacity:
+                    self.fan_dict[fan]["counter"] += 1
+        # update meta data
+        self.meta_keys = list(self.fan_dict.keys())
+        self.meta_counter = []
+        for fan in self.meta_keys:
+            self.meta_counter.append(self.fan_dict[fan]["counter"])
+        # prefix sum
+        self.meta_prefix_sum = np.concatenate(([0], np.cumsum(self.meta_counter)))
+
+    def sample(self):  # sample trajectory according to meta data
+        # randomly select trajectory
+        sample_count = self.meta_prefix_sum[-1]
+        sample_index = random.randint(0, sample_count - 1)
+        # locate index
+        fan_index = bisect_right(self.meta_prefix_sum, sample_index) - 1
+        record_index = sample_index - self.meta_prefix_sum[fan_index]
+        fan_name = self.meta_keys[fan_index]
+        # access data
+        trajectory_data = self.fan_dict[fan_name]["queue"][record_index]
+        return trajectory_data
+
+    def save_cache(self, save_path, checkpoint_name):
+        # Save the current state of the replay buffer to a file
+        with open(os.path.join(save_path, checkpoint_name), "wb") as f:
+            cPickle.dump(self.fan_dict, f)
+
+    def load_cache(self, save_path, checkpoint_name):
+        with open(os.path.join(save_path, checkpoint_name), "rb") as f:
+            self.fan_dict = cPickle.load(f)
 
 
 class ReplayBufferActorSide:
@@ -220,3 +293,12 @@ class ReplayBufferLearnerSideTagged:
             return np.stack(data)
         else:
             return np.array(data)
+
+
+if __name__ == "__main__":
+    buffer_sil = ReplayBufferSIL(100)
+    buffer_sil.fan_dict["五门齐"]["queue"].append(1)
+    buffer_sil.save_cache("./", "tmp.pkl")
+    new_bf = ReplayBufferSIL(20)
+    new_bf.load_cache("./", "tmp.pkl")
+    print(new_bf.fan_dict)

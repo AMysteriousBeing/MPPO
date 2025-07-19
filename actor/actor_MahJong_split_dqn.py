@@ -11,10 +11,10 @@ from agent import (
     ZombieAgent,
     SearchAgentSlim,
     FeatureAgent2Adapted,
-    FeatureAgent2Adapted2a,
+    FeatureAgent2Adapted2,
 )
 from environment import MahjongGBEnv
-from model import MahJongCNNNet6_LargeV2, MahJongNet64a
+from model import MahJongCNNNet6_LargeV2_DQN
 from utils import CustomLogger
 
 LOG_FORMAT = (
@@ -30,7 +30,7 @@ TILE_LIST = [
 ]
 
 
-class ActorMahJongSplit(Process):
+class ActorMahJongSplitDQN(Process):
     """
     Seperate true trajectory actors from sampling actors for better data control
     Once guided-actors iterate through all data a fixed numer of times,
@@ -58,6 +58,7 @@ class ActorMahJongSplit(Process):
         self.eval = eval_actor
         self.config = config
         self.early_kill = self.config["early_kill"]
+        self.epsilon = self.config.get("epsilon", 0.1)
 
         # trajectory sampling and augmentation scheme
         self.guide_trajectory = guide_trajectory
@@ -101,13 +102,10 @@ class ActorMahJongSplit(Process):
     def run(self):
         torch.set_num_threads(1)
         game_counter = 0
-        model = MahJongCNNNet6_LargeV2()
+        model = MahJongCNNNet6_LargeV2_DQN("cpu")
         model.eval()
-        self.logger.info("Starting {}".format(self.name))
 
         while not self.actor_routine_status_list[1]:
-            # load balancing
-            time.sleep(random.uniform(0, 0.3))
 
             if self.actor_routine_status_list[2]:
                 continue
@@ -240,15 +238,15 @@ class ActorMahJongSplit(Process):
                         state["action_mask"] = torch.tensor(
                             state["action_mask"], dtype=torch.float32
                         ).unsqueeze(0)
+                        if np.random.random() < self.epsilon:
+                            random_q = torch.rand((1, 235))
+                            masked_q = random_q * state["action_mask"]
+                            action = torch.argmax(masked_q, dim=1).item()
+                        else:
 
-                        with torch.no_grad():
-                            logits, value = model(state)
-                            action_dist = torch.distributions.Categorical(logits=logits)
-                            if self.eval:
+                            with torch.no_grad():
+                                logits = model(state)
                                 action = torch.argmax(logits, dim=1).item()
-                            else:
-                                action = action_dist.sample().item()
-                            value = value.item()
                         # use correct action
                         if correct_action_flag:
                             # calculate correct action
@@ -262,7 +260,7 @@ class ActorMahJongSplit(Process):
                                 ]
                                 action = correct_action
                         actions[agent_name] = action
-                        values[agent_name] = value
+                        values[agent_name] = 0
                         agent_data["action"].append(actions[agent_name])
                         agent_data["value"].append(values[agent_name])
                         agent_data["info"].append(
@@ -270,7 +268,7 @@ class ActorMahJongSplit(Process):
                                 player_id,
                                 -1 if not correct_action_flag else historical_winner_id,
                                 self.model_tag_id,
-                                augmentation_key if not self.self_play else -1,
+                                int(done),
                             ]
                         )
                     else:
@@ -306,7 +304,9 @@ class ActorMahJongSplit(Process):
 
             # postprocessing episode data for each agent
             sampled_steps = 0
+            ii = 0
             for agent_name, agent_data in episode_data.items():
+                ii += 1
                 if self.debug:
                     break
                 if len(agent_data["action"]) < len(agent_data["reward"]):
@@ -317,34 +317,90 @@ class ActorMahJongSplit(Process):
                     actions = np.array(agent_data["action"], dtype=np.int64)
                     rewards = np.array(agent_data["reward"], dtype=np.float32)
                     values = np.array(agent_data["value"], dtype=np.float32)
-                    next_values = np.array(
-                        agent_data["value"][1:] + [0], dtype=np.float32
+                    done = np.array([0] * len(values), dtype=np.float32)
+                    done[-1] = 1
+                    next_mask = np.array(
+                        agent_data["state"]["action_mask"][1:]
+                        + [agent_data["state"]["action_mask"][0]],
+                        dtype=np.float32,
                     )
-
-                    td_target = rewards + next_values * self.config["gamma"]
-                    td_delta = td_target - values
-                    advs = []
-                    adv = 0
-                    for delta in td_delta[::-1]:
-                        adv = self.config["gamma"] * self.config["lambda"] * adv + delta
-                        advs.append(adv)  # GAE
-                    advs.reverse()
-                    advantages = np.array(advs, dtype=np.float32)
+                    next_obs = np.array(
+                        agent_data["state"]["observation"][1:]
+                        + [agent_data["state"]["observation"][0]],
+                        dtype=np.float32,
+                    )
                     info_list = np.array(agent_data["info"]).reshape(-1, 4)
-                    if self.self_play:
-                        info_list[:, 1] = winner_id
-                    if not self.debug and not self.eval:
-                        # send samples to replay_buffer (per agent)
-                        self.replay_buffer_act.push(
-                            {
-                                "state": {"observation": obs, "action_mask": mask},
-                                "action": actions,
-                                "adv": advantages,
-                                "target": td_target,
-                                "info": info_list,  # player_id, winner_id, tag, augmentation scheme id
-                            }
-                        )
+                    # remove single action states to save space
+                    if ii % 2 == 0:
+                        summed_mask = np.array([sum(i) for i in mask])
+                        obs = obs[summed_mask > 1]
+                        next_obs = next_obs[summed_mask > 1]
+                        mask = mask[summed_mask > 1]
+                        next_mask = next_mask[summed_mask > 1]
+                        values = values[summed_mask > 1]
+                        rewards = rewards[summed_mask > 1]
+                        done = done[summed_mask > 1]
+                        info_list = info_list[summed_mask > 1]
+                        actions = actions[summed_mask > 1]
+
+                        if not self.debug and not self.eval:
+                            # send samples to replay_buffer (per agent)
+                            self.replay_buffer_act.push(
+                                {
+                                    "state": {"observation": obs, "action_mask": mask},
+                                    "action": actions,
+                                    "reward": rewards,
+                                    "next_state": {
+                                        "observation": next_obs,
+                                        "action_mask": next_mask,
+                                    },
+                                    "done": done,
+                                    "info": info_list,  # player_id, winner_id, tag, augmentation scheme id
+                                }
+                            )
+                            # load balancing
+                            time.sleep(random.uniform(0, 0.1))
+                    else:
+                        half_length = (len(actions) + 1) // 2
+                        for it in range(2):
+                            if not self.debug and not self.eval:
+                                # send samples to replay_buffer (per agent)
+                                self.replay_buffer_act.push(
+                                    {
+                                        "state": {
+                                            "observation": obs[
+                                                i * half_length : (i + 1) * half_length
+                                            ],
+                                            "action_mask": mask[
+                                                i * half_length : (i + 1) * half_length
+                                            ],
+                                        },
+                                        "action": actions[
+                                            i * half_length : (i + 1) * half_length
+                                        ],
+                                        "reward": rewards[
+                                            i * half_length : (i + 1) * half_length
+                                        ],
+                                        "next_state": {
+                                            "observation": next_obs[
+                                                i * half_length : (i + 1) * half_length
+                                            ],
+                                            "action_mask": next_mask[
+                                                i * half_length : (i + 1) * half_length
+                                            ],
+                                        },
+                                        "done": done[
+                                            i * half_length : (i + 1) * half_length
+                                        ],
+                                        "info": info_list[
+                                            i * half_length : (i + 1) * half_length
+                                        ],  # player_id, winner_id, tag, augmentation scheme id
+                                    }
+                                )
+                                # load balancing
+                                time.sleep(random.uniform(0, 0.1))
                     sampled_steps += len(actions)
+
             self.replay_buffer_act.push(
                 {
                     "log": {

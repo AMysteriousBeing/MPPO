@@ -4,7 +4,7 @@ import torch
 from typing import Optional, Union, Tuple, Dict
 
 
-class ReplayBufferOld:
+class ReplayBufferOld2:
     """
     This ReplayBuffer is for offline RL algorithms only.
     """
@@ -37,11 +37,17 @@ class ReplayBufferOld:
         self.next_observations = np.zeros(
             (self._max_size,) + self.obs_shape, dtype=obs_dtype
         )
+        self.next_n_observations = np.zeros(
+            (self._max_size,) + self.obs_shape, dtype=obs_dtype
+        )
         self.actions = np.zeros((self._max_size, self.action_dim), dtype=action_dtype)
         self.rewards = np.zeros((self._max_size, 1), dtype=np.float32)
         self.terminals = np.zeros((self._max_size, 1), dtype=np.float32)
+        self.next_n_rewards = np.zeros((self._max_size, 1), dtype=np.float32)
+        self.next_n_terminals = np.zeros((self._max_size, 1), dtype=np.float32)
         self.masks = np.zeros((self._max_size, self.mask_size), dtype=obs_dtype)
         self.next_masks = np.zeros((self._max_size, self.mask_size), dtype=obs_dtype)
+        self.next_n_masks = np.zeros((self._max_size, self.mask_size), dtype=obs_dtype)
 
         self.device = torch.device(device)
 
@@ -87,23 +93,35 @@ class ReplayBufferOld:
         self,
         obss: np.ndarray,
         next_obss: np.ndarray,
+        next_n_obss: np.ndarray,
         actions: np.ndarray,
         rewards: np.ndarray,
+        next_n_rewards: np.ndarray,
         terminals: np.ndarray,
+        next_n_terminals: np.ndarray,
         masks: np.ndarray,
         next_masks: np.ndarray,
+        next_n_masks: np.ndarray,
     ) -> None:
         batch_size = len(obss)
         indexes = np.arange(self._ptr, self._ptr + batch_size) % self._max_size
 
         self.observations[indexes] = np.array(obss).copy()
         self.next_observations[indexes] = np.array(next_obss).copy()
+        self.next_n_observations[indexes] = np.array(next_n_obss).copy()
         self.actions[indexes] = np.array(actions).copy().reshape(-1, self.action_dim)
         self.rewards[indexes] = np.array(rewards).copy().reshape(-1, 1)
+        self.next_n_rewards[indexes] = np.array(next_n_rewards).copy().reshape(-1, 1)
         self.terminals[indexes] = np.array(terminals).copy().reshape(-1, 1)
+        self.next_n_terminals[indexes] = (
+            np.array(next_n_terminals).copy().reshape(-1, 1)
+        )
         self.masks[indexes] = np.array(masks).copy().reshape(-1, self.mask_size)
         self.next_masks[indexes] = (
             np.array(next_masks).copy().reshape(-1, self.mask_size)
+        )
+        self.next_n_masks[indexes] = (
+            np.array(next_n_masks).copy().reshape(-1, self.mask_size)
         )
         self._ptr = (self._ptr + batch_size) % self._max_size
         self._size = min(self._size + batch_size, self._max_size)
@@ -127,21 +145,33 @@ class ReplayBufferOld:
 
     def load_dataset_with_mask(self, dataset: Dict[str, np.ndarray]) -> None:
         observations = np.array(dataset["observations"], dtype=self.obs_dtype)
-        next_observations = np.array(dataset["next_observations"], dtype=self.obs_dtype)
+        next_observations = np.array(
+            dataset["next_n_observations"], dtype=self.obs_dtype
+        )
+        next_n_observations = np.array(
+            dataset["next_observations"], dtype=self.obs_dtype
+        )
         actions = np.array(dataset["actions"], dtype=self.action_dtype)
         rewards = np.array(dataset["rewards"], dtype=np.float32)
         terminals = np.array(dataset["terminals"], dtype=np.float32)
+        next_n_rewards = np.array(dataset["next_n_rewards"], dtype=np.float32)
+        next_n_terminals = np.array(dataset["next_n_terminals"], dtype=np.float32)
         masks = np.array(dataset["mask"], dtype=np.float32)
         next_masks = np.array(dataset["next_mask"], dtype=np.float32)
+        next_n_masks = np.array(dataset["next_n_mask"], dtype=np.float32)
 
         self.add_batch_with_mask(
             observations,
             next_observations,
+            next_n_observations,
             actions,
             rewards,
+            next_n_rewards,
             terminals,
+            next_n_terminals,
             masks,
             next_masks,
+            next_n_masks,
         )
 
         # self.observations = observations
@@ -175,12 +205,24 @@ class ReplayBufferOld:
                 "next_observations": torch.tensor(
                     self.next_observations[batch_indexes]
                 ).to(self.device),
+                "next_n_observations": torch.tensor(
+                    self.next_n_observations[batch_indexes]
+                ).to(self.device),
                 "terminals": torch.tensor(self.terminals[batch_indexes]).to(
                     self.device
                 ),
+                "next_n_terminals": torch.tensor(
+                    self.next_n_terminals[batch_indexes]
+                ).to(self.device),
                 "rewards": torch.tensor(self.rewards[batch_indexes]).to(self.device),
+                "next_n_rewards": torch.tensor(self.next_n_rewards[batch_indexes]).to(
+                    self.device
+                ),
                 "masks": torch.tensor(self.masks[batch_indexes]).to(self.device),
                 "next_masks": torch.tensor(self.next_masks[batch_indexes]).to(
+                    self.device
+                ),
+                "next_n_masks": torch.tensor(self.next_n_masks[batch_indexes]).to(
                     self.device
                 ),
             }

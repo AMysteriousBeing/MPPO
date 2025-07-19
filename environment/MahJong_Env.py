@@ -2,6 +2,15 @@ from agent import MahjongGBAgent
 
 import random
 from collections import defaultdict
+import copy
+
+try:
+    from MahjongGB import MahjongFanCalculator, MahjongShanten, RegularShanten
+except:
+    print(
+        "MahjongGB library required! Please visit https://github.com/ailab-pku/PyMahjongGB for more information."
+    )
+    raise
 
 
 class Error(Exception):
@@ -11,6 +20,7 @@ class Error(Exception):
 class MahjongGBEnv:
     """
     Reward Engineering: Player Hu: Player +0.5, others -0.2
+    Player Shanten Progress + 0.2
     Game Step: self.game_step_penalty
     """
 
@@ -31,7 +41,8 @@ class MahjongGBEnv:
         self.r = random.Random()
         self.normalizeReward = config.get("reward_norm", False)
         self.debug = False
-        self.game_step_penalty = -0.0008  # -0.0006
+        self.game_step_penalty = -0.0006  # -0.0008  # -0.0006
+        self.shanten_reward = 0.07  # 0  # 0.07
         self.fan_name_list = []
 
     def return_agent_list(self):
@@ -86,6 +97,56 @@ class MahjongGBEnv:
         self._deal()
         return self._obs()
 
+    def reset_SIL_adapted(
+        self, prevalentWind=-1, tileWall="", steps_to_kill=-1, seed=-1
+    ):
+        """
+        Same interface as reset, but gives SIL style returns
+        """
+        # Create agents to process features
+        self.steps_to_kill = steps_to_kill
+        self.agents = [self.agentclz_list[i](i) for i in range(4)]
+        self.reward = None
+        self.game_step = 0
+        self.done = False
+        # Init random seed
+        if self.variety > 0:
+            random.seed(self.r.randint(0, self.variety - 1))
+        if seed != -1:
+            random.seed(seed)
+        # Init prevalent wind
+        self.prevalentWind = (
+            random.randint(0, 3) if prevalentWind < 0 else prevalentWind
+        )
+        for agent in self.agents:
+            agent.request2obs("Wind %d" % self.prevalentWind)
+        # Prepare tile wall
+        if tileWall:
+            self.tileWall = tileWall.split()
+        else:
+            self.tileWall = []
+            for j in range(4):
+                for i in range(1, 10):
+                    self.tileWall.append("W" + str(i))
+                    self.tileWall.append("B" + str(i))
+                    self.tileWall.append("T" + str(i))
+                for i in range(1, 5):
+                    self.tileWall.append("F" + str(i))
+                for i in range(1, 4):
+                    self.tileWall.append("J" + str(i))
+            random.shuffle(self.tileWall)
+        self.originalTileWall = " ".join(self.tileWall)
+        if self.duplicate:
+            self.tileWall = [self.tileWall[i * 34 : (i + 1) * 34] for i in range(4)]
+        self.shownTiles = defaultdict(int)
+        tile_wall_copy = copy.deepcopy(self.tileWall)
+        # Deal cards
+        self._deal()
+        return self._obs(), {
+            "prevalentWind": self.prevalentWind,
+            "tileWall": tile_wall_copy,
+        }
+
     def step(self, action_dict, early_kill=False):
         try:
             self.game_step += 1
@@ -136,6 +197,7 @@ class MahjongGBEnv:
                     self.obs = {
                         i: self.agents[i].request2obs("Huang") for i in range(4)
                     }
+                    # calculating final shanten dist
                     self.reward = [-0.2 + self.game_step_penalty for i in range(4)]
                     self.done = True
                     return self._obs(), self._reward(), self._done()
@@ -227,9 +289,23 @@ class MahjongGBEnv:
         return {self.agent_names[k]: v for k, v in self.obs.items()}
 
     def _reward(self):
+        shantens = {}
+        for player in self.obs:
+            if len(self.hands[player]) % 3 == 1:
+                shantens[player] = min(
+                    MahjongShanten(
+                        pack=tuple(self.packs[player]), hand=tuple(self.hands[player])
+                    ),
+                    RegularShanten(hand=tuple(self.hands[player]))[0],
+                )
+            else:
+                shantens[player] = self.shantens[player]
         rewards = {
-            self.agent_names[k]: self.game_step_penalty for k in self.obs
+            self.agent_names[k]: (self.shantens[k] - shantens[k]) * self.shanten_reward
+            + self.game_step_penalty
+            for k in self.obs
         }
+        self.shantens.update(shantens)
         if self.reward:
             return {self.agent_names[k]: self.reward[k] for k in self.obs}
         else:
@@ -252,6 +328,7 @@ class MahjongGBEnv:
     def _deal(self):
         self.hands = []
         self.packs = []
+        self.shantens = {}
         for i in range(4):
             hand = []
             while len(hand) < 13:
@@ -259,6 +336,10 @@ class MahjongGBEnv:
                 hand.append(tile)
             self.hands.append(hand)
             self.packs.append([])
+            self.shantens[i] = min(
+                MahjongShanten(pack=tuple(), hand=tuple(hand)),
+                RegularShanten(hand=tuple(hand))[0],
+            )
             self.agents[i].request2obs(" ".join(["Deal", *hand]))
             if self.debug:
                 print(" ".join(["Deal", *hand]))

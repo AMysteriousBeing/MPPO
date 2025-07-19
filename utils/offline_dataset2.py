@@ -3,8 +3,10 @@ import torch
 import collections
 import os
 
+# qlearning_dataset with n_step info
 
-def qlearning_dataset(
+
+def qlearning_dataset2(
     path_to_data,
     world_size,
     rank,
@@ -36,11 +38,15 @@ def qlearning_dataset(
     """
     obs_ = []
     next_obs_ = []
+    next_n_obs_ = []
     action_ = []
     reward_ = []
+    next_n_reward_ = []
     done_ = []
+    next_n_done_ = []
     mask_ = []
     next_mask_ = []
+    next_n_mask_ = []
     file_list = os.listdir(path_to_data)
     file_list.sort()
     len_list = len(file_list)
@@ -52,25 +58,34 @@ def qlearning_dataset(
         npz = np.load(path_to_file)
         obs_.extend(npz["obs"])
         next_obs_.extend(npz["next_obs"])
+        next_n_obs_.extend(npz["next_n_obs"])
         action_.extend(npz["action"])
         reward_.extend(npz["reward"])
+        next_n_reward_.extend(npz["next_n_reward"])
         done_.extend(npz["done"])
+        next_n_done_.extend(npz["next_n_done"])
         if include_mask:
             mask_.extend(npz["mask"])
             if create_artificial_next_mask:
                 next_mask_.extend(np.ones_like(npz["mask"]))
+                next_n_mask_.extend(np.ones_like(npz["mask"]))
             else:
                 next_mask_.extend(npz["next_mask"])
+                next_n_mask_.extend(npz["next_n_mask"])
 
     if include_mask:
         return {
             "observations": np.array(obs_),
             "actions": np.array(action_),
             "next_observations": np.array(next_obs_),
+            "next_n_observations": np.array(next_n_obs_),
             "rewards": np.array(reward_),
+            "next_n_rewards": np.array(next_n_reward_),
             "terminals": np.array(done_),
+            "next_n_terminals": np.array(next_n_done_),
             "mask": np.array(mask_),
             "next_mask": np.array(next_mask_),
+            "next_n_mask": np.array(next_n_mask_),
         }
 
     return {
